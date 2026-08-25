@@ -29,6 +29,11 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install Android API 37 and Build Tools
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-37" "build-tools;37.0.0"
+
       - name: Grant Gradle wrapper permission
         run: chmod +x gradlew
 
@@ -40,13 +45,20 @@ jobs:
       - name: Validate APK and FOSS contents
         run: |
           set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
+          AAPT="$BUILD_TOOLS/aapt"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          test -x "$AAPT"
+          test -x "$APKSIGNER"
           APK=$(find app/build/outputs/apk/fossMobileUniversal/debug -name '*.apk' -print -quit)
           test -n "$APK"
-          aapt dump badging "$APK" | tee apk-badging.txt
-          aapt dump badging "$APK" | grep -q "package: name='moe.rukamori.archivetune.debug'"
-          aapt dump badging "$APK" | grep -q "native-code:.*'arm64-v8a'.*'armeabi-v7a'"
-          apksigner verify --verbose --min-sdk-version 26 "$APK"
-          unzip -p "$APK" 'classes*.dex' > classes.dex.bin
+          "$AAPT" dump badging "$APK" | tee apk-badging.txt
+          "$AAPT" dump badging "$APK" | grep -q "package: name='moe.rukamori.archivetune.debug'"
+          "$AAPT" dump badging "$APK" | grep -q "native-code:.*'arm64-v8a'.*'armeabi-v7a'"
+          "$APKSIGNER" verify --verbose --min-sdk-version 26 "$APK"
+          while IFS= read -r dex; do
+            unzip -p "$APK" "$dex" >> classes.dex.bin
+          done < <(unzip -Z1 "$APK" | grep -E '^classes[0-9]*\.dex$')
           if grep -aEq 'Lcom/google/(firebase|android/gms)/|Landroidx/media3/cast/' classes.dex.bin; then
             echo 'Forbidden FOSS dependency detected in DEX.' >&2
             exit 1
