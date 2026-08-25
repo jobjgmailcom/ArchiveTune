@@ -29,10 +29,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android API 37 and Build Tools
+      - name: Install Android API 36 and Build Tools
         run: |
           yes | sdkmanager --licenses
-          sdkmanager "platforms;android-37" "build-tools;37.0.0"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Grant Gradle wrapper permission
         run: chmod +x gradlew
@@ -45,7 +45,7 @@ jobs:
       - name: Validate APK and FOSS contents
         run: |
           set -euo pipefail
-          BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
           AAPT="$BUILD_TOOLS/aapt"
           APKSIGNER="$BUILD_TOOLS/apksigner"
           test -x "$AAPT"
