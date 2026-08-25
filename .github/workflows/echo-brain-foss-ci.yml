@@ -1,0 +1,68 @@
+name: Echo Brain FOSS APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  foss-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant Gradle wrapper permission
+        run: chmod +x gradlew
+
+      - name: Run FOSS tests and assemble debug APK
+        run: >-
+          ./gradlew :app:testFossMobileUniversalDebugUnitTest :app:assembleFossMobileUniversalDebug
+          --no-daemon --max-workers=1 --stacktrace
+
+      - name: Validate APK and FOSS contents
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/fossMobileUniversal/debug -name '*.apk' -print -quit)
+          test -n "$APK"
+          aapt dump badging "$APK" | tee apk-badging.txt
+          aapt dump badging "$APK" | grep -q "package: name='moe.rukamori.archivetune.debug'"
+          aapt dump badging "$APK" | grep -q "native-code:.*'arm64-v8a'.*'armeabi-v7a'"
+          apksigner verify --verbose --min-sdk-version 26 "$APK"
+          unzip -p "$APK" 'classes*.dex' > classes.dex.bin
+          if grep -aEq 'Lcom/google/(firebase|android/gms)/|Landroidx/media3/cast/' classes.dex.bin; then
+            echo 'Forbidden FOSS dependency detected in DEX.' >&2
+            exit 1
+          fi
+          if unzip -l "$APK" | grep -Eiq 'firebase|play-services|media3.cast'; then
+            echo 'Forbidden FOSS component detected in ZIP paths.' >&2
+            exit 1
+          fi
+          sha256sum "$APK" | tee archive-tune-echo-brain-foss.apk.sha256
+
+      - name: Upload FOSS APK and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArchiveTune-Echo-Brain-FOSS-debug
+          path: |
+            app/build/outputs/apk/fossMobileUniversal/debug/*.apk
+            archive-tune-echo-brain-foss.apk.sha256
+            apk-badging.txt
+          if-no-files-found: error

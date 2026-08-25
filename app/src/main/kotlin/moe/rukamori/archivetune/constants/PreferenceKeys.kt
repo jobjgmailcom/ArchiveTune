@@ -309,6 +309,11 @@ val CrossfadeEnabledKey = booleanPreferencesKey("crossfadeEnabled")
 val CrossfadeDurationKey = floatPreferencesKey("crossfadeDuration")
 val CrossfadeGaplessKey = booleanPreferencesKey("crossfadeGapless")
 val AutoLoadMoreKey = booleanPreferencesKey("autoLoadMore")
+val EchoBrainEnabledKey = booleanPreferencesKey("echoBrainEnabled")
+val EchoBrainSimilarityKey = stringPreferencesKey("echoBrainSimilarity")
+val EchoBrainAllowAlternativeVersionsKey = booleanPreferencesKey("echoBrainAllowAlternativeVersions")
+val EchoBrainCooldownKey = stringPreferencesKey("echoBrainCooldown")
+val EchoBrainLastDiagnosticKey = stringPreferencesKey("echoBrainLastDiagnostic")
 val AutoDownloadOnLikeKey = booleanPreferencesKey("autoDownloadOnLike")
 val AutoSkipNextOnErrorKey = booleanPreferencesKey("autoSkipNextOnError")
 val PauseOnDeviceMuteKey = booleanPreferencesKey("pauseOnDeviceMute")
@@ -320,6 +325,15 @@ val ArtistSeparatorsKey = stringPreferencesKey("artistSeparators")
 val ExternalDownloaderEnabledKey = booleanPreferencesKey("externalDownloaderEnabled")
 val ExternalDownloaderPackageKey = stringPreferencesKey("externalDownloaderPackage")
 val PlaylistTagsFilterKey = stringPreferencesKey("playlistTagsFilter")
+
+enum class EchoBrainSimilarity(
+    val minimumScore: Int,
+) {
+    STRICT(90),
+    BALANCED(80),
+    DISCOVERY(70),
+    FLEXIBLE(60),
+}
 val LibraryChipOrderKey = stringPreferencesKey("libraryChipOrder")
 val PlaylistTagOrderKey = stringPreferencesKey("playlistTagOrder")
 val ShowHomeCategoryChipsKey = booleanPreferencesKey("showHomeCategoryChips")

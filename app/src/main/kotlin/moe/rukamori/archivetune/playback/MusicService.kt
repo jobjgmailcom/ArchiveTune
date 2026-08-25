@@ -144,6 +144,12 @@ import moe.rukamori.archivetune.constants.CrossfadeDurationKey
 import moe.rukamori.archivetune.constants.CrossfadeEnabledKey
 import moe.rukamori.archivetune.constants.CrossfadeGaplessKey
 import moe.rukamori.archivetune.constants.DeviceMutePlaybackRecoveryVolumeKey
+import moe.rukamori.archivetune.constants.EchoBrainAllowAlternativeVersionsKey
+import moe.rukamori.archivetune.constants.EchoBrainCooldownKey
+import moe.rukamori.archivetune.constants.EchoBrainEnabledKey
+import moe.rukamori.archivetune.constants.EchoBrainLastDiagnosticKey
+import moe.rukamori.archivetune.constants.EchoBrainSimilarity
+import moe.rukamori.archivetune.constants.EchoBrainSimilarityKey
 import moe.rukamori.archivetune.constants.DiscordShowWhenPausedKey
 import moe.rukamori.archivetune.constants.DiscordTokenKey
 import moe.rukamori.archivetune.constants.EnableDiscordRPCKey
@@ -433,6 +439,12 @@ class MusicService :
     private var hideMusicVideos = false
     private var infiniteQueueJob: Job? = null
     private var infiniteQueueGeneration = 0L
+    private val echoBrainInjectionGate = EchoBrainInjectionGate()
+    private var echoBrainInjectionJob: Job? = null
+    private val echoBrainInjectedMediaIds = mutableSetOf<String>()
+    private val echoBrainRecentArtistKeys = java.util.ArrayDeque<String>()
+    private val echoBrainCooldowns = mutableMapOf<String, Long>()
+    private var echoBrainCooldownsLoaded = false
     private val persistentStateLock = Any()
     private val persistentSaveGeneration = AtomicLong(0L)
 
@@ -3997,6 +4009,7 @@ class MusicService :
         ensureScopesActive()
         cancelCrossfade(resetVolume = true, resetPauseAtEnd = true)
         cancelInfiniteQueueBootstrap()
+        resetEchoBrainSession()
         suppressAutoPlayback = false
         currentQueue = queue
         queueTitle = null
@@ -4309,9 +4322,205 @@ class MusicService :
         infiniteQueueLoading.value = false
     }
 
+    private fun resetEchoBrainSession() {
+        echoBrainInjectionJob?.cancel()
+        echoBrainInjectionJob = null
+        echoBrainInjectionGate.clear()
+        echoBrainInjectedMediaIds.clear()
+        echoBrainRecentArtistKeys.clear()
+    }
+
+    private fun scheduleEchoBrainInjection() {
+        if (!dataStore.get(EchoBrainEnabledKey, false)) return
+        if (suppressAutoPlayback || player.repeatMode == REPEAT_MODE_ONE) return
+
+        val seed = player.currentMediaItem ?: return
+        val seedMediaId = seed.mediaId.trim().ifBlank { return }
+        if (isCurrentPlaybackItemLocal(player.currentMetadata ?: return)) return
+        val currentIndex = player.currentMediaItemIndex
+        val nextMediaId =
+            if (currentIndex + 1 in 0 until player.mediaItemCount) {
+                player.getMediaItemAt(currentIndex + 1).mediaId
+            } else {
+                null
+            }
+        val shouldInject =
+            EchoBrainQueuePlanner.shouldAutoInject(
+                currentIndex = currentIndex,
+                mediaItemCount = player.mediaItemCount,
+                currentIsEchoBrainRecommendation = seedMediaId in echoBrainInjectedMediaIds,
+                nextIsEchoBrainRecommendation = nextMediaId in echoBrainInjectedMediaIds,
+                hasInjectedRecommendations = echoBrainInjectedMediaIds.isNotEmpty(),
+                dominantMode = true,
+            )
+        if (!shouldInject || !echoBrainInjectionGate.tryAcquire(seedMediaId)) return
+
+        echoBrainInjectionJob =
+            scope.launch(SilentHandler) {
+                try {
+                    val hideExplicit = dataStore.get(HideExplicitKey, false)
+                    val minimumSimilarity =
+                        dataStore
+                            .get(EchoBrainSimilarityKey, EchoBrainSimilarity.BALANCED.name)
+                            .let { raw ->
+                                runCatching { EchoBrainSimilarity.valueOf(raw) }
+                                    .getOrDefault(EchoBrainSimilarity.BALANCED)
+                                    .minimumScore
+                            }
+                    val allowAlternativeVersions = dataStore.get(EchoBrainAllowAlternativeVersionsKey, false)
+                    loadEchoBrainCooldownsIfNeeded()
+                    val queuedItems = player.mediaItems
+                    val queuedIds = queuedItems.mapTo(mutableSetOf()) { it.mediaId }
+                    val cooldownKeys = activeEchoBrainCooldownKeys(System.currentTimeMillis())
+
+                    fun safeCandidates(candidates: List<MediaItem>): List<MediaItem> =
+                        candidates
+                            .asSequence()
+                            .filterNot { it.hasBlockedArtist(blockedArtistIds) }
+                            .filter { !hideMusicVideos || !it.metadata?.isMusicVideo.orFalse() }
+                            .filter { !hideExplicit || !it.metadata?.explicit.orFalse() }
+                            .toList()
+
+                    val localCandidates =
+                        withContext(Dispatchers.IO) {
+                            database.relatedSongs(seedMediaId).map(Song::toMediaItem)
+                        }.let(::safeCandidates)
+                    var source = "local"
+                    var candidate =
+                        EchoBrainQueuePlanner.selectOne(
+                            seed = seed,
+                            candidates = localCandidates,
+                            queuedIds = queuedIds,
+                            injectedIds = echoBrainInjectedMediaIds,
+                            cooldownKeys = cooldownKeys,
+                            recentArtistKeys = echoBrainRecentArtistKeys.toSet(),
+                            minimumSimilarity = minimumSimilarity,
+                            allowAlternativeVersions = allowAlternativeVersions,
+                        )
+
+                    if (candidate == null) {
+                        source = "radio"
+                        val radioCandidates =
+                            withContext(Dispatchers.IO) {
+                                YouTubeQueue(
+                                    endpoint = WatchEndpoint(videoId = seedMediaId),
+                                    followAutomixPreview = true,
+                                ).getInitialStatus().items
+                            }.let(::safeCandidates)
+                        candidate =
+                            EchoBrainQueuePlanner.selectOne(
+                                seed = seed,
+                                candidates = radioCandidates,
+                                queuedIds = queuedIds,
+                                injectedIds = echoBrainInjectedMediaIds,
+                                cooldownKeys = cooldownKeys,
+                                recentArtistKeys = echoBrainRecentArtistKeys.toSet(),
+                                minimumSimilarity = minimumSimilarity,
+                                allowAlternativeVersions = allowAlternativeVersions,
+                            )
+                    }
+
+                    if (candidate != null && player.currentMediaItem?.mediaId == seedMediaId) {
+                        insertEchoBrainRecommendation(candidate)
+                        recordEchoBrainInjection(candidate)
+                        writeEchoBrainDiagnostic(
+                            "result=inserted source=$source seed=$seedMediaId candidate=${candidate.mediaId} threshold=$minimumSimilarity",
+                        )
+                    } else {
+                        writeEchoBrainDiagnostic(
+                            "result=no_candidate source=$source seed=$seedMediaId threshold=$minimumSimilarity",
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.tag("EchoBrain").w(e, "Failed to inject a recommendation")
+                    writeEchoBrainDiagnostic("result=error seed=$seedMediaId type=${e::class.simpleName}")
+                } finally {
+                    echoBrainInjectionGate.release(seedMediaId)
+                    echoBrainInjectionJob = null
+                }
+            }
+    }
+
+    private fun insertEchoBrainRecommendation(candidate: MediaItem) {
+        val insertionIndex = (player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount)
+        val shuffleOrder =
+            if (player.shuffleModeEnabled && player.mediaItemCount > 0) {
+                buildPlayNextShuffleOrder(
+                    currentIndex = player.currentMediaItemIndex,
+                    insertionIndex = insertionIndex,
+                    insertionCount = 1,
+                )
+            } else {
+                null
+            }
+        player.addMediaItems(insertionIndex, listOf(candidate))
+        shuffleOrder?.let(localPlayer::setShuffleOrder)
+        player.prepare()
+    }
+
+    private fun recordEchoBrainInjection(candidate: MediaItem) {
+        echoBrainInjectedMediaIds += candidate.mediaId
+        EchoBrainQueuePlanner.primaryArtistKey(candidate).let { artistKey ->
+            if (artistKey.isNotBlank()) {
+                echoBrainRecentArtistKeys.remove(artistKey)
+                echoBrainRecentArtistKeys.addLast(artistKey)
+                while (echoBrainRecentArtistKeys.size > ECHO_BRAIN_ARTIST_WINDOW) {
+                    echoBrainRecentArtistKeys.removeFirst()
+                }
+            }
+        }
+        echoBrainCooldowns[EchoBrainQueuePlanner.canonicalSongKey(candidate)] = System.currentTimeMillis()
+        scope.launch(Dispatchers.IO) { persistEchoBrainCooldowns() }
+    }
+
+    private suspend fun loadEchoBrainCooldownsIfNeeded() {
+        if (echoBrainCooldownsLoaded) return
+        val now = System.currentTimeMillis()
+        dataStore
+            .get(EchoBrainCooldownKey, "")
+            .lineSequence()
+            .mapNotNull { line ->
+                val separator = line.lastIndexOf('|')
+                val key = line.take(separator).takeIf(String::isNotBlank)
+                val timestamp = line.drop(separator + 1).toLongOrNull()
+                if (separator > 0 && key != null && timestamp != null && now - timestamp < ECHO_BRAIN_COOLDOWN_MILLIS) {
+                    key to timestamp
+                } else {
+                    null
+                }
+            }.forEach { (key, timestamp) -> echoBrainCooldowns[key] = timestamp }
+        echoBrainCooldownsLoaded = true
+    }
+
+    private fun activeEchoBrainCooldownKeys(now: Long): Set<String> {
+        val iterator = echoBrainCooldowns.iterator()
+        while (iterator.hasNext()) {
+            if (now - iterator.next().value >= ECHO_BRAIN_COOLDOWN_MILLIS) iterator.remove()
+        }
+        return echoBrainCooldowns.keys.toSet()
+    }
+
+    private suspend fun persistEchoBrainCooldowns() {
+        val serialized =
+            echoBrainCooldowns.entries
+                .sortedByDescending { it.value }
+                .take(ECHO_BRAIN_COOLDOWN_LIMIT)
+                .joinToString("\n") { (key, timestamp) -> "$key|$timestamp" }
+        dataStore.edit { preferences -> preferences[EchoBrainCooldownKey] = serialized }
+    }
+
+    private fun writeEchoBrainDiagnostic(message: String) {
+        scope.launch(Dispatchers.IO) {
+            dataStore.edit { preferences -> preferences[EchoBrainLastDiagnosticKey] = message.take(ECHO_BRAIN_DIAGNOSTIC_LIMIT) }
+        }
+    }
+
     fun stopAndClearPlayback(clearPersistentState: Boolean = false) {
         cancelRestoredQueueHydration()
         cancelInfiniteQueueBootstrap()
+        resetEchoBrainSession()
         suppressAutoPlayback = true
         cancelCrossfade(resetVolume = true, resetPauseAtEnd = true)
         clearAutomix()
@@ -6684,6 +6893,10 @@ class MusicService :
 
         scrobbleManager?.onSongStop()
 
+        if (!timelineEmpty && reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+            scheduleEchoBrainInjection()
+        }
+
         if (!timelineEmpty &&
             dataStore.get(AutoLoadMoreKey, true) &&
             reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
@@ -6754,6 +6967,8 @@ class MusicService :
                 ?.localConfiguration
                 ?.uri
                 ?.shouldBypassPlayerCache() == true
+
+    private fun Boolean?.orFalse(): Boolean = this == true
 
     override fun onPlaybackStateChanged(
         @Player.State playbackState: Int,
@@ -8799,6 +9014,10 @@ class MusicService :
         private const val AUDIO_EFFECT_INITIALIZATION_MAX_ATTEMPTS = 4
         private const val AUDIO_EFFECT_INITIALIZATION_RETRY_DELAY_MS = 250L
         private const val INFINITE_QUEUE_MAX_BOOTSTRAP_PAGES = 3
+        private val ECHO_BRAIN_COOLDOWN_MILLIS = TimeUnit.HOURS.toMillis(24)
+        private const val ECHO_BRAIN_COOLDOWN_LIMIT = 512
+        private const val ECHO_BRAIN_ARTIST_WINDOW = 8
+        private const val ECHO_BRAIN_DIAGNOSTIC_LIMIT = 640
         private const val DISCORD_SYNC_TAG = "DiscordSync"
         private const val DISCORD_HOLD_TIMEOUT_MS = 7_000L
         const val CHANNEL_ID = "music_channel_01"

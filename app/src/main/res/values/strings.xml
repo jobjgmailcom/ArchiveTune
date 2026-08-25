@@ -547,6 +547,15 @@
     <string name="queue">Queue</string>
     <string name="persistent_queue">Persistent queue</string>
     <string name="persistent_queue_desc">Restore your last queue when the app starts</string>
+    <string name="echo_brain">Echo Brain</string>
+    <string name="echo_brain_desc">Automatically inserts one related song after the current track without removing your original queue</string>
+    <string name="echo_brain_similarity">Echo Brain similarity</string>
+    <string name="echo_brain_similarity_strict">Strict (90%)</string>
+    <string name="echo_brain_similarity_balanced">Balanced (80%)</string>
+    <string name="echo_brain_similarity_discovery">Discovery (70%)</string>
+    <string name="echo_brain_similarity_flexible">Flexible (60%)</string>
+    <string name="echo_brain_alternative_versions">Allow alternative versions</string>
+    <string name="echo_brain_alternative_versions_desc">Allow remixes, live, acoustic and other alternate versions when selecting a related song</string>
     <string name="permanent_shuffle">Permanent shuffle mode</string>
     <string name="permanent_shuffle_desc">Keep shuffle enabled when you start a new song</string>
     <string name="skip_silence">Skip silence</string>

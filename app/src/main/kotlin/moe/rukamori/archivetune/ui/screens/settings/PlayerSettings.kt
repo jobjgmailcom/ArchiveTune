@@ -44,6 +44,10 @@ import moe.rukamori.archivetune.constants.CrossfadeDurationKey
 import moe.rukamori.archivetune.constants.CrossfadeEnabledKey
 import moe.rukamori.archivetune.constants.CrossfadeGaplessKey
 import moe.rukamori.archivetune.constants.DeviceMutePlaybackRecoveryVolumeKey
+import moe.rukamori.archivetune.constants.EchoBrainAllowAlternativeVersionsKey
+import moe.rukamori.archivetune.constants.EchoBrainEnabledKey
+import moe.rukamori.archivetune.constants.EchoBrainSimilarity
+import moe.rukamori.archivetune.constants.EchoBrainSimilarityKey
 import moe.rukamori.archivetune.constants.ExternalDownloaderEnabledKey
 import moe.rukamori.archivetune.constants.ExternalDownloaderPackageKey
 import moe.rukamori.archivetune.constants.HISTORY_DURATION_DEFAULT
@@ -95,6 +99,21 @@ fun PlayerSettings(navController: NavController) {
         rememberPreference(
             PersistentQueueKey,
             defaultValue = true,
+        )
+    val (echoBrainEnabled, onEchoBrainEnabledChange) =
+        rememberPreference(
+            EchoBrainEnabledKey,
+            defaultValue = false,
+        )
+    val (echoBrainSimilarity, onEchoBrainSimilarityChange) =
+        rememberEnumPreference(
+            EchoBrainSimilarityKey,
+            defaultValue = EchoBrainSimilarity.BALANCED,
+        )
+    val (echoBrainAllowAlternativeVersions, onEchoBrainAllowAlternativeVersionsChange) =
+        rememberPreference(
+            EchoBrainAllowAlternativeVersionsKey,
+            defaultValue = false,
         )
     val (permanentShuffle, onPermanentShuffleChange) =
         rememberPreference(
@@ -514,6 +533,43 @@ fun PlayerSettings(navController: NavController) {
                         icon = { Icon(painterResource(R.drawable.queue_music), null) },
                         checked = persistentQueue,
                         onCheckedChange = onPersistentQueueChange,
+                    )
+                }
+
+                item {
+                    SwitchPreference(
+                        title = { Text(stringResource(R.string.echo_brain)) },
+                        description = stringResource(R.string.echo_brain_desc),
+                        icon = { Icon(painterResource(R.drawable.queue_music), null) },
+                        checked = echoBrainEnabled,
+                        onCheckedChange = onEchoBrainEnabledChange,
+                    )
+                }
+
+                item(visible = echoBrainEnabled) {
+                    EnumListPreference(
+                        title = { Text(stringResource(R.string.echo_brain_similarity)) },
+                        icon = { Icon(painterResource(R.drawable.graphic_eq), null) },
+                        selectedValue = echoBrainSimilarity,
+                        onValueSelected = onEchoBrainSimilarityChange,
+                        valueText = {
+                            when (it) {
+                                EchoBrainSimilarity.STRICT -> stringResource(R.string.echo_brain_similarity_strict)
+                                EchoBrainSimilarity.BALANCED -> stringResource(R.string.echo_brain_similarity_balanced)
+                                EchoBrainSimilarity.DISCOVERY -> stringResource(R.string.echo_brain_similarity_discovery)
+                                EchoBrainSimilarity.FLEXIBLE -> stringResource(R.string.echo_brain_similarity_flexible)
+                            }
+                        },
+                    )
+                }
+
+                item(visible = echoBrainEnabled) {
+                    SwitchPreference(
+                        title = { Text(stringResource(R.string.echo_brain_alternative_versions)) },
+                        description = stringResource(R.string.echo_brain_alternative_versions_desc),
+                        icon = { Icon(painterResource(R.drawable.shuffle), null) },
+                        checked = echoBrainAllowAlternativeVersions,
+                        onCheckedChange = onEchoBrainAllowAlternativeVersionsChange,
                     )
                 }
 
