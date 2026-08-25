@@ -376,6 +376,7 @@ class MusicService :
     )
     private val playbackUrlCache = ConcurrentHashMap<String, AuthScopedCacheValue>()
     private val extractorPlaybackUrlCache = ConcurrentHashMap<String, AuthScopedCacheValue>()
+    private val extractorFallbackMediaIds = mutableSetOf<String>()
     private val remotePlaybackTrackingUrlCache = ConcurrentHashMap<String, String>()
     private val contentLengthCache = ConcurrentHashMap<String, Long>()
     private val castMimeTypeCache = LruCache<String, String>(128)
@@ -3789,8 +3790,22 @@ class MusicService :
             }
 
             403 -> {
-                Timber.tag(TAG).w("Extractor rejected a tampered or invalid signed playback URL")
-                stopOnError()
+                extractorPlaybackUrlCache.remove(mediaId)
+                playbackUrlCache.remove(mediaId)
+                YTPlayerUtils.invalidateCachedStreamUrls(mediaId)
+                extractorFallbackMediaIds += mediaId
+                val retryStarted =
+                    playbackStreamRecoveryTracker.registerRetryAttempt(mediaId) &&
+                        preparePlaybackFromSnapshot(capturePlaybackRecoverySnapshot())
+                if (retryStarted) {
+                    Timber.tag(TAG).w(
+                        "Extractor stream was rejected with HTTP 403; retrying %s through native YouTube clients",
+                        mediaId,
+                    )
+                } else {
+                    Timber.tag(TAG).w("Extractor rejected a signed playback URL and no retry budget remains")
+                    stopOnError()
+                }
                 true
             }
 
@@ -7091,6 +7106,7 @@ class MusicService :
         ) {
             if (player.isPlaying || (player.playbackState == Player.STATE_READY && !player.playWhenReady)) {
                 playbackStreamRecoveryTracker.onPlaybackRecovered(currentMediaId)
+                currentMediaId?.let(extractorFallbackMediaIds::remove)
             }
             currentMediaId
                 ?.let(playbackUrlCache::get)
@@ -7788,7 +7804,10 @@ class MusicService :
         }
 
         val lowDataModeActive = isLowDataModeActive()
-        if (preferredStreamClient == PlayerStreamClient.ARCHIVETUNE_EXTRACTOR) {
+        if (
+            preferredStreamClient == PlayerStreamClient.ARCHIVETUNE_EXTRACTOR &&
+            mediaId !in extractorFallbackMediaIds
+        ) {
             return resolveArchiveTuneExtractorDataSpec(
                 dataSpec = dataSpec,
                 mediaId = mediaId,

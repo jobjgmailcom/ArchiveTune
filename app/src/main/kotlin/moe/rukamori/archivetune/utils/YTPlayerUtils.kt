@@ -148,6 +148,7 @@ object YTPlayerUtils {
      */
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> =
         arrayOf(
+            VISIONOS,
             ANDROID_VR_NO_AUTH,
             ANDROID_VR_1_65_10,
             ANDROID_VR_1_61_48,
@@ -169,7 +170,6 @@ object YTPlayerUtils {
             ANDROID_TESTSUITE,
             ANDROID_UNPLUGGED,
             IPADOS,
-            VISIONOS,
             TVHTML5_SIMPLY_EMBEDDED_PLAYER,
         )
 

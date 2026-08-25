@@ -64,6 +64,15 @@ fun buildSettingsGroups(
             accentColor = MaterialTheme.colorScheme.tertiary,
             onClick = { navController.navigate("settings/player") },
         )
+    val echoBrain =
+        SettingsItem(
+            key = "echo_brain",
+            icon = painterResource(R.drawable.auto_awesome),
+            title = stringResource(R.string.echo_brain),
+            subtitle = stringResource(R.string.echo_brain_desc),
+            accentColor = MaterialTheme.colorScheme.tertiary,
+            onClick = { navController.navigate("settings/echo_brain") },
+        )
     val lyrics =
         SettingsItem(
             key = "lyrics",
@@ -233,7 +242,7 @@ fun buildSettingsGroups(
         ),
         SettingsGroup(
             title = stringResource(R.string.settings_section_player_content),
-            items = listOf(appearance, playback, lyrics, content, behavior),
+            items = listOf(appearance, playback, echoBrain, lyrics, content, behavior),
         ),
         SettingsGroup(
             title = stringResource(R.string.integration),
